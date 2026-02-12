@@ -1,161 +1,32 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import Papa from 'papaparse';
+import React, { useState, useEffect } from 'react';
 import Xarrow, { Xwrapper, useXarrow } from 'react-xarrows';
 import Table_Conn_Table from './Table_Conn_Table';
 import './Table_Conn_styles.css';
-
-// Helper to generate unique colors
-const generateColor = (seed) => {
-  const colors = [
-    '#e74c3c', '#8e44ad', '#3498db', '#16a085', '#f1c40f', 
-    '#d35400', '#2c3e50', '#7f8c8d', '#c0392b', '#2980b9'
-  ];
-  return colors[seed % colors.length];
-};
+import useLogs from './hooks/useLogs';
+import useTables from './hooks/useTables';
+import useConnections from './hooks/useConnections';
 
 export default function Table_Conn_App() {
-  const [tables, setTables] = useState([]);
-  const [selectedNodes, setSelectedNodes] = useState(new Set());
-  const [connections, setConnections] = useState([]);
-  const [logs, setLogs] = useState([]);
-  const [connectionCounter, setConnectionCounter] = useState(1);
+  const { logs, addLog } = useLogs();
+  const { tables, handleFileUpload } = useTables(addLog);
+  const {
+    connections,
+    selectedNodes,
+    selectedConnectionId,
+    setSelectedConnectionId,
+    contextMenu,
+    setContextMenu,
+    handleNodeClick,
+    createConnection,
+    handleNodeContextMenu,
+    handleSetStart,
+    handleSetEnd,
+    handleAddInstruction,
+    deleteConnection
+  } = useConnections(tables, addLog);
+
   const [showLines, setShowLines] = useState(true);
-  const [selectedConnectionId, setSelectedConnectionId] = useState(null);
-  
-  // Context Menu State
-  const [contextMenu, setContextMenu] = useState({ 
-    visible: false, 
-    x: 0, y: 0, 
-    connectionId: null, 
-    nodeId: null 
-  });
-
   const updateXarrow = useXarrow();
-
-  // Helper to add log
-  const addLog = useCallback((message) => {
-    setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev]);
-  }, []);
-
-  // File Upload Handler
-  const handleFileUpload = (event) => {
-    const files = Array.from(event.target.files);
-    
-    files.forEach((file, index) => {
-      Papa.parse(file, {
-        preview: 3, 
-        complete: (results) => {
-          const newTable = {
-            id: `table-${Date.now()}-${Math.floor(Math.random() * 1000)}`, 
-            name: file.name,
-            headers: results.data[0] || [],
-            rows: results.data.slice(1, 3) 
-          };
-          setTables(prev => [...prev, newTable]);
-          addLog(`Loaded ${file.name} with ${results.data[0]?.length || 0} columns.`);
-        },
-        error: (error) => {
-          console.error("Error parsing CSV:", error);
-          addLog(`Error parsing ${file.name}: ${error.message}`);
-        }
-      });
-    });
-  };
-
-  // Toggle Node Selection
-  const handleNodeClick = (tableId, colIndex) => {
-    const nodeId = `${tableId}-${colIndex}`;
-    setSelectedNodes(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(nodeId)) {
-        newSet.delete(nodeId);
-      } else {
-        newSet.add(nodeId);
-      }
-      return newSet;
-    });
-    // Close context menu if open
-    if (contextMenu.visible) setContextMenu({ ...contextMenu, visible: false });
-  };
-
-  // Create Connection Logic
-  const createConnection = useCallback(() => {
-    if (selectedNodes.size < 2) return;
-
-    const newConnId = `C${connectionCounter}`;
-    const newNodes = Array.from(selectedNodes).map(nodeId => {
-      const [tableId, colIndex] = nodeId.split('-');
-      const table = tables.find(t => t.id === tableId);
-      const headerName = table ? table.headers[parseInt(colIndex)] : 'Unknown';
-      
-      return {
-        id: nodeId,
-        tableId,
-        colIndex: parseInt(colIndex),
-        tableName: table ? table.name : 'Unknown',
-        headerName
-      };
-    });
-
-    const newConnection = {
-      id: newConnId,
-      serial: connectionCounter,
-      color: generateColor(connectionCounter),
-      nodes: newNodes,
-      instructions: '',
-      startNode: null,
-      endNode: null
-    };
-
-    setConnections(prev => [...prev, newConnection]);
-    setConnectionCounter(prev => prev + 1);
-    setSelectedNodes(new Set()); 
-    
-    const names = newNodes.map(n => `${n.tableName}(${n.headerName})`).join(', ');
-    addLog(`Group Created: ${newConnId} linking [${names}]`);
-  }, [selectedNodes, connectionCounter, tables, addLog]);
-
-  // Context Menu Handler
-  const handleNodeContextMenu = (e, connection, nodeId) => {
-    e.preventDefault();
-    if (!connection) return; // Only show context menu if node is part of a connection
-
-    setContextMenu({
-      visible: true,
-      x: e.pageX,
-      y: e.pageY,
-      connectionId: connection.id,
-      nodeId: nodeId
-    });
-  };
-
-  // Context Menu Actions
-  const handleSetStart = () => {
-    setConnections(prev => prev.map(c => 
-      c.id === contextMenu.connectionId ? { ...c, startNode: contextMenu.nodeId } : c
-    ));
-    setContextMenu({ ...contextMenu, visible: false });
-    addLog(`Connection ${contextMenu.connectionId}: Start Node set.`);
-  };
-
-  const handleSetEnd = () => {
-    setConnections(prev => prev.map(c => 
-      c.id === contextMenu.connectionId ? { ...c, endNode: contextMenu.nodeId } : c
-    ));
-    setContextMenu({ ...contextMenu, visible: false });
-    addLog(`Connection ${contextMenu.connectionId}: End Node set.`);
-  };
-
-  const handleAddInstruction = () => {
-    const instruction = prompt("Enter instruction for this connection:");
-    if (instruction !== null) {
-      setConnections(prev => prev.map(c => 
-        c.id === contextMenu.connectionId ? { ...c, instructions: instruction } : c
-      ));
-      addLog(`Connection ${contextMenu.connectionId}: Instruction updated.`);
-    }
-    setContextMenu({ ...contextMenu, visible: false });
-  };
 
   // Keyboard Listener (Space & Delete)
   useEffect(() => {
@@ -166,11 +37,7 @@ export default function Table_Conn_App() {
           createConnection();
         }
       } else if (e.code === 'Delete' || e.code === 'Backspace') {
-        if (selectedConnectionId) {
-          setConnections(prev => prev.filter(c => c.id !== selectedConnectionId));
-          addLog(`Deleted Connection: ${selectedConnectionId}`);
-          setSelectedConnectionId(null);
-        }
+        deleteConnection();
       } else if (e.code === 'Escape') {
         setContextMenu({ ...contextMenu, visible: false });
       }
@@ -178,7 +45,7 @@ export default function Table_Conn_App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodes, createConnection, selectedConnectionId, addLog, contextMenu]);
+  }, [selectedNodes, createConnection, deleteConnection, contextMenu, setContextMenu]);
 
   // Handle Workspace Click (Deselect & Close Menu)
   const handleWorkspaceClick = (e) => {
@@ -317,6 +184,11 @@ export default function Table_Conn_App() {
             {logs.map((log, i) => (
               <div key={i} style={{marginBottom: 2}}>{log}</div>
             ))}
+          </div>
+          <div style={{
+            fontSize: 10, color: '#666', textAlign: 'right', padding: 5, borderTop: '1px solid #444'
+          }}>
+            ver.12-02-26 time 19.25
           </div>
         </div>
       </div>
